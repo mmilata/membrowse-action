@@ -126,8 +126,9 @@ runs:
             ;;
         esac
 
-        # Shared comment flags
-        COMMON_ARGS=()
+        # Shared comment flags; the template context is saved next to the
+        # caller's files so a later step can upload it or debug a template
+        COMMON_ARGS=(--context-json membrowse-comment-context.json)
         case "${INPUT_FOOTER,,}" in
           false|0|no|off)
             COMMON_ARGS+=(--no-footer)

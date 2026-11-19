@@ -81,6 +81,7 @@ def post_combined_pr_comment(
     results: list[dict],
     template_path: Optional[str] = None,
     footer: bool = True,
+    context_path: Optional[str] = None,
 ) -> None:
     """
     Post a single PR comment with combined memory analysis results from multiple targets.
@@ -91,6 +92,7 @@ def post_combined_pr_comment(
         template_path: Optional path to custom Jinja2 template file. If None, uses
             the default template format.
         footer: Whether to append the MemBrowse footer.
+        context_path: Optional path to save the Jinja2 template context to as JSON.
     """
     if not is_gh_cli_available():
         logger.warning("GitHub CLI (gh) not available, skipping PR comment")
@@ -105,7 +107,7 @@ def post_combined_pr_comment(
     # Build comment body using template (custom or default)
     try:
         context = _build_template_context(results)
-        comment_body = _render_comment_body(context, template_path, footer)
+        comment_body = _render_comment_body(context, template_path, footer, context_path)
     except FileNotFoundError as e:
         logger.error("Template error: %s", e)
         raise
@@ -234,6 +236,7 @@ def _render_comment_body(
     context: dict,
     template_path: Optional[str] = None,
     footer: bool = True,
+    context_path: Optional[str] = None,
 ) -> str:
     """
     Render comment body from a template context.
@@ -242,10 +245,17 @@ def _render_comment_body(
         context: Template context dict with 'targets' and 'has_alerts'
         template_path: Path to custom template file, or None for default
         footer: Whether to append the MemBrowse footer
+        context_path: Optional path to save the template context to as JSON,
+            e.g. for developing a custom template against real data
 
     Returns:
         str: Markdown-formatted comment body
     """
+    if context_path:
+        with open(context_path, 'w', encoding='utf-8') as f:
+            json.dump(context, f, indent=2)
+        logger.debug("Saved template context to %s", context_path)
+
     if template_path:
         logger.debug("Rendering comment using custom template: %s", template_path)
         return _render_template(template_path, context, footer)
@@ -260,6 +270,7 @@ def post_summary_comment(
     pr_number: Optional[str] = None,
     template_path: Optional[str] = None,
     footer: bool = True,
+    context_path: Optional[str] = None,
 ) -> None:
     """
     Post a PR comment from a saved /summary API response JSON file.
@@ -273,6 +284,7 @@ def post_summary_comment(
         pr_number: PR number override (auto-extracted from JSON if None)
         template_path: Custom Jinja2 template path, or None for default
         footer: Whether to append the MemBrowse footer
+        context_path: Optional path to save the Jinja2 template context to as JSON
     """
     with open(summary_json_path, 'r', encoding='utf-8') as f:
         response = json.load(f)
@@ -297,7 +309,7 @@ def post_summary_comment(
 
     # Render template from the same response
     context = build_summary_template_context(response)
-    body = _render_comment_body(context, template_path, footer)
+    body = _render_comment_body(context, template_path, footer, context_path)
 
     # body already includes the header/marker from _render_comment_body,
     # so post directly instead of going through post_pr_comment_from_body
@@ -363,6 +375,11 @@ def main():
         action='store_false',
         help='Omit the MemBrowse footer from the comment'
     )
+    parser.add_argument(
+        '--context-json',
+        dest='context_path',
+        help='Save the Jinja2 template context to this JSON file when rendering'
+    )
     args = parser.parse_args()
 
     # Summary JSON mode: extract PR number, render, and post in one step
@@ -373,6 +390,7 @@ def main():
                 pr_number=args.pr_number,
                 template_path=args.template_path,
                 footer=args.footer,
+                context_path=args.context_path,
             )
         except (json.JSONDecodeError, IOError, ValueError) as e:
             logger.error("Failed to post summary comment: %s", e)
@@ -432,9 +450,10 @@ def _handle_file_mode(parser, args):
     # Post combined PR comment with optional custom template
     try:
         post_combined_pr_comment(
-            results, template_path=args.template_path, footer=args.footer
+            results, template_path=args.template_path, footer=args.footer,
+            context_path=args.context_path,
         )
-    except (FileNotFoundError, Jinja2TemplateError) as e:
+    except (FileNotFoundError, Jinja2TemplateError, IOError) as e:
         logger.error("Failed to generate comment: %s", e)
         sys.exit(1)
 
